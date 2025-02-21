@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useActivePlayerStore } from "~/store/activePlayer";
+import type { FFAPlayer, PlayerInfo } from "~/types/player";
+
 const columns = [
   { key: "place", label: "#" },
   { key: "name", label: "Name", sortable: true },
@@ -15,11 +18,12 @@ const sort = ref({
 const page = ref(1);
 const pageCount = 10;
 
-const players = ref([]);
+const players = ref<FFAPlayer[]>([]);
+const loadingNames = ref(new Set<string>());
 
-const { data: rawData, status } = await useLazyAsyncData("players", () => $fetch("/dummy"));
+const { data: rawData, status } = await useLazyAsyncData<(Omit<FFAPlayer, "id"> & { playerId: string })[]>("players", () => $fetch("/dummy"));
 
-watchEffect(async () => {
+watchEffect(() => {
   if (rawData.value) {
     players.value = rawData.value.map((player, index) => ({
       place: index + 1,
@@ -29,38 +33,61 @@ watchEffect(async () => {
       xp: player.xp,
       id: player.playerId,
     }));
-
-    // Fetch names for all players
-    await Promise.all(
-      players.value.map(async (player) => {
-        try {
-          const response = await $fetch(`https://api.minetools.eu/uuid/${player.id}`);
-          player.name = response.name;
-        } catch (error) {
-          console.error(`Error fetching name for player ${player.id}:`, error);
-          player.name = "Error loading name";
-        }
-      })
-    );
   }
 });
 
-// Computed property for paginated rows
-const rows = computed(() => {
+const currentPagePlayers = computed(() => {
   if (!players.value) return [];
   const start = (page.value - 1) * pageCount;
   const end = start + pageCount;
   return players.value.slice(start, end);
 });
 
+watch(
+  [currentPagePlayers, page],
+  async () => {
+    const visiblePlayers = currentPagePlayers.value;
+
+    await Promise.all(
+      visiblePlayers.map(async (player) => {
+        if (loadingNames.value.has(player.id) || player.name !== "Loading...") {
+          return;
+        }
+
+        loadingNames.value.add(player.id);
+
+        try {
+          const response = await $fetch<PlayerInfo>(`https://api.minetools.eu/uuid/${player.id}`);
+
+          const playerIndex = players.value.findIndex((p) => p.id === player.id);
+          if (playerIndex !== -1) {
+            players.value[playerIndex].name = response.name;
+          }
+        } catch (error) {
+          console.error(`Error fetching name for player ${player.id}:`, error);
+          const playerIndex = players.value.findIndex((p) => p.id === player.id);
+          if (playerIndex !== -1) {
+            players.value[playerIndex].name = "Error loading name";
+          }
+        } finally {
+          loadingNames.value.delete(player.id);
+        }
+      })
+    );
+  },
+  { immediate: true }
+);
+
+const rows = computed(() => currentPagePlayers.value);
+
 const totalPlayers = computed(() => players.value?.length || 0);
 
-const handleExpand = ({ openedRows, row }) => {
-  console.log("opened Rows:", openedRows);
-  console.log("Row Data:", row);
+const handleExpand = async ({ row }: { row: FFAPlayer }) => {
+  useActivePlayerStore().setActivePlayer(row);
+  await navigateTo(`/player/${row.id}`);
 };
 
-const expand = ref({
+const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
   openedRows: [],
   row: null,
 });
@@ -75,9 +102,9 @@ const expand = ref({
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No data found' }"
-      :sort="sort"
-      :rows="rows"
-      :columns="columns"
+      :sort
+      :rows
+      :columns
       class="rounded-md border border-gray-300 dark:border-gray-700"
       :ui="{ tr: { base: 'relative transition-colors has-[td]:cursor-pointer has-[td]:hover:bg-gray-100 has-[td]:dark:hover:bg-gray-800' } }"
     >
@@ -93,7 +120,13 @@ const expand = ref({
 </template>
 
 <style scoped>
-:deep(table tbody tr td:first-child) {
-  @apply absolute inset-0 p-0 m-0 border-none pointer-events-none;
+:deep(table tbody) {
+  tr:has(td[colspan]) {
+    @apply border-none;
+  }
+
+  tr td:first-child {
+    @apply absolute inset-0 p-0 m-0 border-none pointer-events-none;
+  }
 }
 </style>
