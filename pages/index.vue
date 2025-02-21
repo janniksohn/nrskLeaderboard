@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { useActivePlayerStore } from "~/store/activePlayer";
+import type { MinecraftProfileResponse } from "~/types/minecraftApi";
 import type { FFAPlayer, PlayerInfo } from "~/types/player";
 
 const columns = [
-  { key: "place", label: "#" },
+  { key: "index", label: "#" },
+  { key: "head", label: "" },
   { key: "name", label: "Name", sortable: true },
   { key: "kills", label: "Kills", sortable: true },
   { key: "deaths", label: "Deaths", sortable: true },
   { key: "xp", label: "XP", sortable: true },
 ];
 
-const sort = ref({
+const sort = ref<{ column: string; direction: "desc" | "asc" }>({
   column: "kills",
   direction: "desc",
 });
@@ -26,7 +28,8 @@ const { data: rawData, status } = await useLazyAsyncData<(Omit<FFAPlayer, "id"> 
 watchEffect(() => {
   if (rawData.value) {
     players.value = rawData.value.map((player, index) => ({
-      place: index + 1,
+      index: index + 1,
+      head: null,
       name: "Loading...",
       kills: player.kills,
       deaths: player.deaths,
@@ -57,14 +60,16 @@ watch(
         loadingNames.value.add(player.id);
 
         try {
-          const response = await $fetch<PlayerInfo>(`https://api.minetools.eu/uuid/${player.id}`);
+          const response = await $fetch<MinecraftProfileResponse>(`https://api.minetools.eu/profile/${player.id}`);
 
           const playerIndex = players.value.findIndex((p) => p.id === player.id);
           if (playerIndex !== -1) {
-            players.value[playerIndex].name = response.name;
+            players.value[playerIndex].name = response.decoded.profileName;
+            players.value[playerIndex].head = "/texture/" + new URL(response.decoded.textures.SKIN.url).pathname.split("/").pop();
           }
         } catch (error) {
           console.error(`Error fetching name for player ${player.id}:`, error);
+
           const playerIndex = players.value.findIndex((p) => p.id === player.id);
           if (playerIndex !== -1) {
             players.value[playerIndex].name = "Error loading name";
@@ -108,6 +113,15 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
       class="rounded-md border border-gray-300 dark:border-gray-700"
       :ui="{ tr: { base: 'relative transition-colors has-[td]:cursor-pointer has-[td]:hover:bg-gray-100 has-[td]:dark:hover:bg-gray-800' } }"
     >
+      <template #index-data="{ row }">
+        <span class="font-mono">{{ row.index }}</span>
+      </template>
+
+      <template #head-data="{ row }">
+        <NuxtImg v-if="row.head" :src="row.head" :modifiers="{ extract: '8_8_8_8', s: '32,kernel_nearest' }" class="size-8 rounded-sm" />
+        <USkeleton v-else class="size-8 rounded-sm" />
+      </template>
+
       <template #expand-action="{ toggle }">
         <div class="absolute inset-0 pointer-events-auto" @click="toggle" />
       </template>
@@ -127,6 +141,10 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
 
   tr td:first-child {
     @apply absolute inset-0 p-0 m-0 border-none pointer-events-none;
+  }
+
+  tr td:nth-child(2) {
+    @apply w-[1ch];
   }
 }
 </style>

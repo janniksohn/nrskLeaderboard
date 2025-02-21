@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useActivePlayerStore } from "~/store/activePlayer";
-import type { PlayerInfo, FFAPlayer } from "~/types/player";
+import type { MinecraftProfileResponse } from "~/types/minecraftApi";
+import type { FFAPlayer } from "~/types/player";
 
 const notFound = ref(false);
 
@@ -15,8 +16,8 @@ if (!useActivePlayerStore().player) {
       id: data.value.playerId,
     };
 
-    await $fetch<PlayerInfo>(`https://api.minetools.eu/uuid/${player.id}`).then((response) => {
-      player.name = response.name;
+    await $fetch<MinecraftProfileResponse>(`https://api.minetools.eu/profile/${player.id}`).then((response) => {
+      player.name = response.decoded.profileName;
       console.log(response);
       useActivePlayerStore().setActivePlayer(player);
     });
