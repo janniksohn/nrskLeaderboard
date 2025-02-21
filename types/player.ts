@@ -1,0 +1,25 @@
+export interface Player {
+  id: string;
+  name: string;
+}
+
+export interface FFAPlayer extends Player {
+  xp: number;
+  kills: number;
+  deaths: number;
+}
+
+type PlayerInfoApiCacheProperties = {
+  HIT: boolean;
+  cache_time: number;
+  cache_time_left: number;
+  cached_at: number;
+  cached_until: number;
+};
+
+export type PlayerInfo = {
+  cache: PlayerInfoApiCacheProperties;
+  id: string | null;
+  name: string;
+  status: "OK" | "ERR";
+};
