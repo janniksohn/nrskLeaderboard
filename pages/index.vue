@@ -346,6 +346,18 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
         tr: { base: 'relative transition-colors has-[td]:cursor-pointer has-[td]:hover:bg-gray-100 has-[td]:dark:hover:bg-gray-800' },
       }"
     >
+      <template #originalRank-data="{ row }">
+        <span
+          :class="{
+            'text-yellow-500': row.originalRank === 1,
+            'text-gray-400 dark:text-gray-100': row.originalRank === 2,
+            'text-orange-500': row.originalRank === 3,
+          }"
+        >
+          {{ row.originalRank }}</span
+        >
+      </template>
+
       <template #head-data="{ row }">
         <NuxtImg v-if="row.head" :src="row.head" class="size-8 min-w-8 rounded-sm" loading="lazy" />
         <USkeleton v-else class="size-8 rounded-sm" />
