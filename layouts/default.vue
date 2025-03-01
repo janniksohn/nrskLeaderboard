@@ -5,9 +5,6 @@
         <div>
           <h1 class="text-xl font-bold">FFA Leaderboard</h1>
         </div>
-        <div>
-          <UInput placeholder="Search..." icon="i-heroicons-magnifying-glass-solid" :ui="{ color: { white: { outline: 'bg-gray-100' } } }" />
-        </div>
       </div>
     </nav>
   </header>

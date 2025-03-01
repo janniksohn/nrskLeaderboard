@@ -8,6 +8,10 @@ export interface FFAPlayer extends Player {
   xp: number;
   kills: number;
   deaths: number;
+  highestKillStreak: number;
+  currentKillStreak: number;
+  bounty: number;
+  heroes: any[];
 }
 
 type PlayerInfoApiCacheProperties = {

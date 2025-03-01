@@ -11,4 +11,6 @@ export default defineNuxtConfig({
       texture: "http://textures.minecraft.net/texture",
     },
   },
+
+  css: ["~/assets/css/main.css"],
 });
