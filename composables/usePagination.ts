@@ -1,11 +1,20 @@
-export const usePaginationCount = (fetchFunction: (page: number) => Promise<any[]>) => {
+export const usePaginationCount = (fetchFunction: (page: number, search?: string) => Promise<{ data: any[]; headers: Headers }>) => {
   const totalPages = ref<number | null>(null);
   const isCountingPages = ref(false);
   const isLoading = ref(false);
+  const totalFilteredCount = ref<number | null>(null);
 
   // Ermittelt die Gesamtzahl der Seiten
-  const countTotalPages = async (): Promise<number | null> => {
-    if (totalPages.value !== null) {
+  const countTotalPages = async (searchTerm: string = ""): Promise<number | null> => {
+    if (searchTerm && totalFilteredCount.value !== null) {
+      // Wenn wir bereits eine gefilterte Gesamtzahl haben, berechne die Seiten
+      return Math.ceil(totalFilteredCount.value / 25); // 25 = pageSize
+    }
+
+    // Bei neuer Suche oder wenn noch keine Seiten bekannt sind
+    if (searchTerm || totalPages.value === null) {
+      totalPages.value = null;
+    } else if (totalPages.value !== null && !searchTerm) {
       return totalPages.value;
     }
 
@@ -23,7 +32,18 @@ export const usePaginationCount = (fetchFunction: (page: number) => Promise<any[
       // Finde eine obere Grenze, die definitiv nicht existiert
       while (true) {
         try {
-          await fetchFunction(high);
+          const response = await fetchFunction(high, searchTerm);
+
+          // Prüfe, ob wir einen Header mit der Gesamtzahl bekommen haben
+          const totalCount = response.headers.get("X-Total-Count");
+          if (totalCount) {
+            const count = parseInt(totalCount);
+            totalFilteredCount.value = count;
+            const pages = Math.ceil(count / 25); // 25 = pageSize
+            totalPages.value = pages;
+            return pages;
+          }
+
           low = high; // Diese Seite existiert noch
           high = high * 2; // Verdoppeln für nächsten Versuch
         } catch (error) {
@@ -36,7 +56,7 @@ export const usePaginationCount = (fetchFunction: (page: number) => Promise<any[
       while (low + 1 < high) {
         const mid = Math.floor((low + high) / 2);
         try {
-          await fetchFunction(mid);
+          await fetchFunction(mid, searchTerm);
           low = mid; // Wenn erfolgreich, setze low auf mid
         } catch (error) {
           high = mid; // Wenn 404, setze high auf mid
@@ -57,6 +77,7 @@ export const usePaginationCount = (fetchFunction: (page: number) => Promise<any[
 
   return {
     totalPages,
+    totalFilteredCount,
     isCountingPages,
     isLoading,
     countTotalPages,

@@ -2,6 +2,7 @@ export interface Player {
   id: string;
   head: string | null;
   name: string;
+  index: number;
 }
 
 export interface FFAPlayer extends Player {

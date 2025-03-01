@@ -1,4 +1,7 @@
 import { H3Event } from "h3";
+import { resolve } from "path";
+import { loadNameCache } from "~/server/utils/loadNameCache";
+import { preloadPlayerNames } from "~/server/utils/preloadPlayerNames";
 
 interface QueryParams {
   page?: string;
@@ -6,11 +9,19 @@ interface QueryParams {
   sort?: string;
   direction?: string;
   fullSort?: string;
+  search?: string;
 }
 
-interface PlayerData {
+export interface PlayerData {
   [key: string]: any;
 }
+
+interface PlayerNameCache {
+  [playerId: string]: string;
+}
+
+// Pfad zur Cache-Datei
+export const CACHE_FILE_PATH = resolve(process.cwd(), "server/cache/player-names.json");
 
 // Cache für die Spielerdaten
 const dataCache: {
@@ -23,17 +34,24 @@ const dataCache: {
   sort: "",
 };
 
+// Cache für Spielernamen
+export let playerNameCache: PlayerNameCache = {};
+
 // Gültigkeit des Caches (5 Minuten)
 const CACHE_TTL = 5 * 60 * 1000;
 
 export default defineEventHandler(async (event: H3Event) => {
-  // Query-Parameter auslesen
+  await loadNameCache();
+  setTimeout(preloadPlayerNames, 1000);
+
+  // Hauptlogik für Spielerdaten
   const query = getQuery(event) as QueryParams;
 
   // Pagination-Parameter extrahieren
   const page = query.page ? Number(query.page) : 1;
   const limit = query.limit ? Number(query.limit) : 100;
   const fullSort = query.fullSort === "true"; // Prüfen, ob vollständige Sortierung angefordert wurde
+  const search = query.search ? decodeURIComponent(query.search) : ""; // Suchbegriff extrahieren
 
   // Sortierung aus der Anfrage extrahieren
   const sort = query.sort || "kills";
@@ -53,18 +71,25 @@ export default defineEventHandler(async (event: H3Event) => {
         // Sortieren der Cache-Daten nach Richtung
         const sortedData = direction === "asc" ? sortData([...dataCache.data], sort, "asc") : sortData([...dataCache.data], sort, "desc");
 
+        // Filterung anwenden, wenn ein Suchbegriff angegeben wurde
+        let filteredData = sortedData;
+        if (search) {
+          filteredData = filterData(sortedData, search);
+        }
+
+        // Gesamtzahl der gefilterten Ergebnisse in Header setzen
+        event.node.res.setHeader("X-Total-Count", filteredData.length.toString());
+
         // Paginierung anwenden
         const startIndex = (page - 1) * limit;
         const endIndex = startIndex + limit;
 
-        if (startIndex >= sortedData.length) {
-          throw createError({
-            statusCode: 404,
-            message: `Seite ${page} nicht gefunden`,
-          });
+        if (startIndex >= filteredData.length) {
+          // Wenn die Seite außerhalb des Bereichs ist, leeres Array zurückgeben
+          return [];
         }
 
-        return sortedData.slice(startIndex, endIndex);
+        return filteredData.slice(startIndex, endIndex);
       }
 
       // Keine Cache-Daten, also alle Seiten abrufen
@@ -102,6 +127,10 @@ export default defineEventHandler(async (event: H3Event) => {
         }
 
         allData = [...allData, ...pageData];
+        allData.map((player, i) => {
+          player.index = i + 1;
+          return player;
+        });
 
         // Wenn wir weniger als die angeforderten Einträge erhalten, haben wir das Ende erreicht
         if (pageData.length < limit) {
@@ -119,18 +148,25 @@ export default defineEventHandler(async (event: H3Event) => {
       // Sortieren entsprechend der Richtung
       const sortedData = direction === "asc" ? sortData(allData, sort, "asc") : sortData(allData, sort, "desc");
 
+      // Filterung anwenden, wenn ein Suchbegriff angegeben wurde
+      let filteredData = sortedData;
+      if (search) {
+        filteredData = filterData(sortedData, search);
+      }
+
+      // Gesamtzahl der gefilterten Ergebnisse in Header setzen
+      event.node.res.setHeader("X-Total-Count", filteredData.length.toString());
+
       // Paginierung anwenden
       const startIndex = (page - 1) * limit;
       const endIndex = startIndex + limit;
 
-      if (startIndex >= sortedData.length) {
-        throw createError({
-          statusCode: 404,
-          message: `Seite ${page} nicht gefunden`,
-        });
+      if (startIndex >= filteredData.length) {
+        // Wenn die Seite außerhalb des Bereichs ist, leeres Array zurückgeben
+        return [];
       }
 
-      return sortedData.slice(startIndex, endIndex);
+      return filteredData.slice(startIndex, endIndex);
     } else {
       // Ursprüngliche Logik für die Sortierung nur auf der aktuellen Seite
       const response = await fetch(`https://api.hglabor.de/stats/FFA/top?sort=${sort}&page=${page}${limit ? `&limit=${limit}` : ""}`, {
@@ -153,6 +189,10 @@ export default defineEventHandler(async (event: H3Event) => {
       }
 
       const data: PlayerData[] = await response.json();
+      data.map((player, i) => {
+        player.index = i + 1;
+        return player;
+      });
 
       if (direction === "asc" && Array.isArray(data)) {
         return sortData(data, sort, "asc");
@@ -194,5 +234,45 @@ function sortData(data: PlayerData[], sortKey: string, direction: "asc" | "desc"
 
     // Bei absteigender Sortierung Ergebnis umkehren
     return direction === "asc" ? comparison : -comparison;
+  });
+}
+
+// Erweiterte Filterfunktion, die auch Namen berücksichtigt
+function filterData(data: PlayerData[], search: string): PlayerData[] {
+  if (!Array.isArray(data) || !search.trim()) return data;
+
+  const searchTerm = search.toLowerCase().trim();
+  const isNumeric = !isNaN(Number(searchTerm));
+  const searchNumber = isNumeric ? Number(searchTerm) : null;
+
+  // Nach Namen im Cache suchen
+  const matchingPlayerIds = Object.entries(playerNameCache)
+    .filter(([_, name]) => name.toLowerCase().includes(searchTerm))
+    .map(([id]) => id);
+
+  return data.filter((player) => {
+    // Suche nach Spieler-ID/UUID
+    if (player.playerId && player.playerId.toLowerCase().includes(searchTerm)) {
+      return true;
+    }
+
+    // Suche nach Namen aus dem Cache
+    if (matchingPlayerIds.includes(player.playerId)) {
+      return true;
+    }
+
+    // Suche nach numerischen Werten
+    if (isNumeric && searchNumber !== null) {
+      return (
+        player.kills === searchNumber ||
+        player.deaths === searchNumber ||
+        player.xp === searchNumber ||
+        (player.bounty !== undefined && player.bounty === searchNumber) ||
+        (player.currentKillStreak !== undefined && player.currentKillStreak === searchNumber) ||
+        (player.highestKillStreak !== undefined && player.highestKillStreak === searchNumber)
+      );
+    }
+
+    return false;
   });
 }

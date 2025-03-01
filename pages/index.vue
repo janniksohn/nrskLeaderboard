@@ -4,7 +4,7 @@ import type { FFAPlayer } from "~/types/player";
 import { useIntersectionObserver } from "@vueuse/core";
 
 const columns = [
-  { key: "originalRank", label: "#" },
+  { key: "index", label: "#" },
   { key: "head", label: "" },
   { key: "name", label: "Name", sortable: true },
   { key: "kills", label: "Kills", sortable: true },
@@ -33,21 +33,47 @@ const playerProfileCache = ref<Map<string, { name: string; head: string | null }
 const originalPlayerRanks = ref<Map<string, number>>(new Map());
 const isFirstLoad = ref(true);
 
-// Fetch a specific page of players with sorting
-const fetchPlayerPage = async (pageNum: number) => {
+// Search functionality implementation
+const search = ref("");
+const isSearching = ref(false);
+const searchDebounceTimeout = ref<NodeJS.Timeout | null>(null);
+
+// Debounced search implementation
+const debouncedSearch = ref(search.value);
+const updateDebouncedSearch = () => {
+  if (searchDebounceTimeout.value) {
+    clearTimeout(searchDebounceTimeout.value);
+  }
+
+  searchDebounceTimeout.value = setTimeout(() => {
+    debouncedSearch.value = search.value;
+    searchDebounceTimeout.value = null;
+  }, 300);
+};
+
+// Fetch a specific page of players with sorting and searching
+const fetchPlayerPage = async (pageNum: number, searchTerm: string = "") => {
   try {
     const sortColumn = sort.value.column;
     const direction = sort.value.direction;
+    isSearching.value = searchTerm.length > 0;
 
-    return await $fetch<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(`/api/players?page=${pageNum}&sort=${sortColumn}&direction=${direction}&limit=${pageSize}&fullSort=true`);
+    const response = await $fetch<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(
+      `/api/players?page=${pageNum}&sort=${sortColumn}&direction=${direction}&limit=${pageSize}&fullSort=true${searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : ""}`,
+      { headers: { accept: "*/*" } }
+    );
+
+    isSearching.value = false;
+    return response;
   } catch (error) {
     console.error(`Failed to fetch player page ${pageNum}:`, error);
+    isSearching.value = false;
     throw error;
   }
 };
 
 // Pagination Count for API page determination
-const { totalPages, isLoading: countingPages, countTotalPages } = usePaginationCount(fetchPlayerPage);
+const { totalPages, totalFilteredCount, isLoading: countingPages, countTotalPages } = usePaginationCount((page, search) => fetchPlayerPage(page, search));
 
 // Reset and refresh data when sort changes but maintain the cache
 watch(
@@ -55,31 +81,53 @@ watch(
   async () => {
     page.value = 1;
     totalPages.value = null;
+    totalFilteredCount.value = null;
     visiblePlayerMap.value.clear();
+
+    // Ensure original ranks are loaded before refreshing with new sort
+    if (isFirstLoad.value) {
+      await fetchOriginalRanks();
+    }
+
     await refresh();
-    await countTotalPages();
+    await countTotalPages(debouncedSearch.value);
   },
   { deep: true }
 );
+
+// Watch for debounced search changes and refresh data
+watch(debouncedSearch, async (newSearch, oldSearch) => {
+  if (newSearch.trim() !== oldSearch.trim()) {
+    page.value = 1;
+    totalPages.value = null;
+    totalFilteredCount.value = null;
+    visiblePlayerMap.value.clear();
+    await refresh();
+    await countTotalPages(newSearch);
+  }
+});
+
+// Watch für den Such-Input und triggere den Debounce
+watch(search, updateDebouncedSearch);
 
 // Initial data fetch for first page
 const {
   data: rawData,
   status,
   refresh,
-} = await useLazyAsyncData<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(() => fetchPlayerPage(page.value), {
-  watch: [page],
+} = await useLazyAsyncData<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(() => fetchPlayerPage(page.value, debouncedSearch.value), {
+  watch: [page, debouncedSearch],
 });
 
-// Fetch original ranks (only once) when default sort is applied
+// Fetch original ranks (only once) - always using kills/desc regardless of current sort
 const fetchOriginalRanks = async () => {
-  if (!isFirstLoad.value || sort.value.column !== "kills" || sort.value.direction !== "desc") {
+  if (!isFirstLoad.value) {
     return;
   }
 
   try {
     // Fetch all pages to build complete ranking
-    const allPlayers: { playerId: string }[] = [];
+    const allPlayers: (Omit<FFAPlayer, "id"> & { playerId: string })[] = [];
     let currentPage = 1;
 
     while (currentPage <= (totalPages.value || 1)) {
@@ -88,41 +136,28 @@ const fetchOriginalRanks = async () => {
       currentPage++;
     }
 
-    // Store original ranks
-    allPlayers.forEach((player, index) => {
-      originalPlayerRanks.value.set(player.playerId, index + 1);
-    });
-
     isFirstLoad.value = false;
   } catch (error) {
     console.error("Failed to fetch original ranks:", error);
   }
 };
 
-// Count total pages on first load
+// Count total pages on first load and fetch original ranks
 onMounted(async () => {
   await countTotalPages();
-  if (sort.value.column === "kills" && sort.value.direction === "desc") {
-    await fetchOriginalRanks();
-  }
+  await fetchOriginalRanks();
 });
 
 // Process raw data into player rows with cache integration
 watchEffect(() => {
   if (rawData.value) {
-    const startIndex = (page.value - 1) * pageSize;
     visiblePlayerMap.value.clear();
 
-    players.value = rawData.value.map((player, index) => {
+    players.value = rawData.value.map((player) => {
       const playerId = player.playerId;
       const cachedProfile = playerProfileCache.value.get(playerId);
 
-      // Use original rank if available, otherwise use current index
-      const originalRank = originalPlayerRanks.value.get(playerId) || startIndex + index + 1;
-
       return {
-        index: startIndex + index + 1, // Keep for compatibility
-        originalRank,
         ...player,
         head: cachedProfile ? cachedProfile.head : null,
         name: cachedProfile ? cachedProfile.name : "Loading...",
@@ -203,6 +238,19 @@ const loadPlayerProfile = async (playerId: string) => {
 
     // Update player in table
     updatePlayerInTable(playerId, playerName, playerHead);
+
+    // Spielername im Backend-Cache speichern für die Suche
+    try {
+      await $fetch("/api/players/names", {
+        method: "POST",
+        body: {
+          playerId: playerId,
+          name: playerName,
+        },
+      });
+    } catch (error) {
+      console.error("Fehler beim Speichern des Namens im Backend:", error);
+    }
   } catch (error) {
     console.error(`Error fetching name for player ${playerId}:`, error);
 
@@ -270,54 +318,27 @@ watch(
   { deep: true }
 );
 
-const totalPlayerCount = computed(() => (totalPages.value ? totalPages.value * pageSize : 0));
-
-// Search functionality implementation
-const search = ref("");
-
-// Create a filtered rows computed property
-const filteredRows = computed(() => {
-  if (!search.value.trim()) return players.value;
-
-  const searchTerm = search.value.toLowerCase();
-  return players.value.filter((player) => {
-    // If the player name is still loading or had an error, we can't search it
-    if (player.name === "Loading..." || player.name === "Error loading name") {
-      return false;
-    }
-
-    // Search in player name
-    if (player.name.toLowerCase().includes(searchTerm)) {
-      return true;
-    }
-
-    // Search by exact match in numeric fields
-    if (!isNaN(Number(searchTerm))) {
-      const searchNumber = parseInt(searchTerm);
-      return player.kills === searchNumber || player.deaths === searchNumber || player.xp === searchNumber;
-    }
-
-    return false;
-  });
+// Total player count calculation based on search state
+const totalPlayerCount = computed(() => {
+  if (debouncedSearch.value.trim() && totalFilteredCount.value !== null) {
+    return totalFilteredCount.value;
+  }
+  return totalPages.value ? totalPages.value * pageSize : 0;
 });
 
-// Update the rows computed property to use filteredRows instead of players
-const rows = computed(() => filteredRows.value);
+// Handle clear search
+const clearSearch = () => {
+  search.value = "";
+  // Debounce-Timeout clearen und sofort aktualisieren
+  if (searchDebounceTimeout.value) {
+    clearTimeout(searchDebounceTimeout.value);
+    searchDebounceTimeout.value = null;
+  }
+  debouncedSearch.value = "";
+};
 
-// Reset search when changing pages or sort
-watch(
-  [page, sort],
-  () => {
-    search.value = "";
-  },
-  { deep: true }
-);
-
-// Add a computed property to show filtered count
-const filteredCount = computed(() => {
-  if (!search.value.trim()) return totalPlayerCount.value;
-  return filteredRows.value.length;
-});
+// Rows direkt aus players übernehmen
+const rows = computed(() => players.value);
 
 const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
   openedRows: [],
@@ -329,14 +350,15 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
   <div class="border border-gray-300 dark:border-gray-700 rounded-lg">
     <div class="flex px-3 py-3.5 border-b border-gray-200 dark:border-gray-700">
       <UInput v-model="search" placeholder="Search..." class="flex-1" />
-      <span v-if="search.trim()" class="ml-3 self-center text-sm text-gray-500 dark:text-gray-400"> {{ filteredRows.length }} results </span>
+      <UButton v-if="search.trim()" @click="clearSearch" icon="i-heroicons-x-mark" color="gray" variant="ghost" class="ml-2" />
+      <span v-if="search.trim()" class="ml-3 self-center text-sm text-gray-500 dark:text-gray-400"> {{ totalPlayerCount }} results </span>
     </div>
 
     <UTable
       @update:sort="onUpdateSort"
       v-model:expand="expand"
       v-model:sort="sort"
-      :loading="status === 'pending' || countingPages"
+      :loading="status === 'pending' || countingPages || isSearching"
       :loading-state="{ icon: 'i-heroicons-arrow-path-20-solid', label: 'Loading...' }"
       :progress="{ color: 'primary', animation: 'carousel' }"
       :empty-state="{ icon: 'i-heroicons-circle-stack-20-solid', label: 'No data found' }"
