@@ -344,6 +344,8 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
   openedRows: [],
   row: null,
 });
+
+const statsOpen = ref(false);
 </script>
 
 <template>
@@ -432,9 +434,13 @@ const expand = ref<{ row: FFAPlayer | null; openedRows: any[] }>({
                 icon="i-lucide-flame-kindling"
                 iconColor="text-purple-500"
               />
+
+              <UButton variant="outline" class="justify-center rounded-md" @click="statsOpen = true">Full Stats</UButton>
             </div>
           </div>
         </div>
+
+        <Stats v-model:open="statsOpen" :player="row" />
       </template>
     </UTable>
   </div>

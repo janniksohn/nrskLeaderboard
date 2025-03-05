@@ -12,7 +12,7 @@ export interface FFAPlayer extends Player {
   highestKillStreak: number;
   currentKillStreak: number;
   bounty: number;
-  heroes: any[];
+  heroes: Character[];
 }
 
 type PlayerInfoApiCacheProperties = {
@@ -29,3 +29,27 @@ export type PlayerInfo = {
   name: string;
   status: "OK" | "ERR";
 };
+
+interface ExperiencePoints {
+  experiencePoints: number;
+}
+
+// Generic ability property interface
+interface AbilityProperty {
+  experiencePoints: number;
+}
+
+// Generic ability interface
+interface Ability {
+  [propertyName: string]: AbilityProperty;
+}
+
+// Character abilities interface
+interface CharacterAbilities {
+  [abilityName: string]: Ability;
+}
+
+// Characters interface
+interface Character {
+  [characterName: string]: CharacterAbilities;
+}
