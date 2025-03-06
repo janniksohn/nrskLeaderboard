@@ -131,7 +131,7 @@ const fetchOriginalRanks = async () => {
     let currentPage = 1;
 
     while (currentPage <= (totalPages.value || 1)) {
-      const pageData = await $fetch<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(`/api/players?page=${currentPage}&sort=kills&direction=desc&limit=${pageSize}&fullSort=true`);
+      const pageData = await $fetch<(Omit<FFAPlayer, "id"> & { playerId: string })[]>(`/api/players?page=${currentPage}&sort=kills&direction=desc&fullSort=true`);
       allPlayers.push(...pageData);
       currentPage++;
     }
@@ -241,7 +241,7 @@ const loadPlayerProfile = async (playerId: string) => {
 
     // Spielername im Backend-Cache speichern für die Suche
     try {
-      await $fetch("/api/players/names", {
+      await $fetch("/api/names", {
         method: "POST",
         body: {
           playerId: playerId,

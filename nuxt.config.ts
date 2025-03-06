@@ -2,12 +2,7 @@
 export default defineNuxtConfig({
   compatibilityDate: "2024-11-01",
   devtools: { enabled: true },
-  modules: [
-    "@nuxt/ui",
-    "@pinia/nuxt",
-    "@nuxt/image",
-    "@nuxthub/core",
-  ],
+  modules: ["@nuxt/ui", "@pinia/nuxt", "@nuxt/image", "@nuxthub/core"],
 
   image: {
     provider: "ipx",
@@ -18,4 +13,29 @@ export default defineNuxtConfig({
   },
 
   css: ["~/assets/css/main.css"],
+
+  nitro: {
+    experimental: {
+      database: true,
+    },
+
+    database: {
+      default: {
+        connector: "libsql",
+        options: {
+          url: "libsql://nrskcache-janniksohn.turso.io",
+          authToken: process.env.TURSO_AUTH_TOKEN,
+        },
+      },
+    },
+
+    devDatabase: {
+      default: {
+        connector: "bun-sqlite",
+        options: {
+          name: "database",
+        },
+      },
+    },
+  },
 });
